@@ -88,14 +88,15 @@ module Dalli
               server.request(:send_multiget, keys.map {|a| validate_key(a.to_s)})
             rescue DalliError, NetworkError => e
               Dalli.logger.debug { e.inspect }
-              Dalli.logger.debug { "unable to get key #{key}" }
+              Dalli.logger.debug { "unable to get keys for server #{server.hostname}:#{server.port}" }
             end
           end
 
           values = {}
           return values if groups.keys.empty?
 
-          groups.keys.each do |server|
+          servers = group.keys
+          servers.each do |server|
             next unless server.alive?
             begin
               server.multi_response_start

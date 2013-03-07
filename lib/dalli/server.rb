@@ -251,7 +251,7 @@ module Dalli
       generic_response(true)
     end
 
-    def send_multi(keys)
+    def send_multiget(keys)
       req = ""
       keys.each do |key|
         req << [REQUEST, OPCODES[:getkq], key.bytesize, 0, 0, 0, key.bytesize, 0, 0, key].pack(FORMAT[:getkq])
