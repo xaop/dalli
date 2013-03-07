@@ -95,7 +95,7 @@ module Dalli
           values = {}
           return values if groups.keys.empty?
 
-          servers = group.keys
+          servers = groups.keys
           servers.each do |server|
             next unless server.alive?
             begin
