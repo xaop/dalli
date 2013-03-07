@@ -73,11 +73,19 @@ module Dalli
       options = keys.pop if keys.last.is_a?(Hash) || keys.last.nil?
       ring.lock do
         begin
-          servers = self.servers_in_use = Set.new
+          groups = keys.flatten.group_by do |a|
+            key = validate_key(a.to_s)
+            ring.server_for_key(key)
+          end
+          no_server_found = groups.delete(nil)
 
-          keys.flatten.each do |key|
+          groups.each do |server, keys|
             begin
-              perform(:getkq, key)
+              # TODO: do this with the perform chokepoint?
+              # But given the fact that fetching the response doesn't take place
+              # in that slot it's misleading anyway. Need to move all of this method
+              # into perform to be meaningful
+              server.request(:send_multiget, keys.map {|a| validate_key(a.to_s)})
             rescue DalliError, NetworkError => e
               Dalli.logger.debug { e.inspect }
               Dalli.logger.debug { "unable to get key #{key}" }
@@ -85,9 +93,9 @@ module Dalli
           end
 
           values = {}
-          return values if servers.empty?
+          return values if groups.keys.empty?
 
-          servers.each do |server|
+          groups.keys.each do |server|
             next unless server.alive?
             begin
               server.multi_response_start
@@ -142,8 +150,6 @@ module Dalli
           end
 
           values
-        ensure
-          self.servers_in_use = nil
         end
       end
     end
@@ -326,21 +332,12 @@ module Dalli
       begin
         server = ring.server_for_key(key)
         ret = server.request(op, key, *args)
-        servers_in_use << server if servers_in_use
         ret
       rescue NetworkError => e
         Dalli.logger.debug { e.inspect }
         Dalli.logger.debug { "retrying request with new server" }
         retry
       end
-    end
-
-    def servers_in_use
-      Thread.current[:"#{object_id}-servers"]
-    end
-
-    def servers_in_use=(value)
-      Thread.current[:"#{object_id}-servers"] = value
     end
 
     def validate_key(key)
