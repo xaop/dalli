@@ -1,11 +1,16 @@
-require 'dalli/compressor'
-require 'dalli/client'
-require 'dalli/ring'
-require 'dalli/server'
-require 'dalli/socket'
-require 'dalli/version'
-require 'dalli/options'
-require 'dalli/railtie' if defined?(::Rails::Railtie)
+if defined?(:require_relative)
+  require = method(:require_relative)
+else
+  require = method(:require)
+end
+require['dalli/compressor']
+require['dalli/client']
+require['dalli/ring']
+require['dalli/server']
+require['dalli/socket']
+require['dalli/version']
+require['dalli/options']
+require['dalli/railtie'] if defined?(::Rails::Railtie)
 
 module Dalli
   # generic error
