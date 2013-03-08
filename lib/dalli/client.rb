@@ -73,8 +73,8 @@ module Dalli
       options = keys.pop if keys.last.is_a?(Hash) || keys.last.nil?
       ring.lock do
         begin
-          groups = keys.flatten.group_by do |a|
-            key = validate_key(a.to_s)
+          mapped_keys = keys.map {|a| validate_key(a.to_s)}
+          groups = mapped_keys.flatten.group_by do |key|
             ring.server_for_key(key)
           end
           no_server_found = groups.delete(nil)
@@ -85,7 +85,7 @@ module Dalli
               # But given the fact that fetching the response doesn't take place
               # in that slot it's misleading anyway. Need to move all of this method
               # into perform to be meaningful
-              server.request(:send_multiget, keys.map {|a| validate_key(a.to_s)})
+              server.request(:send_multiget, keys)
             rescue DalliError, NetworkError => e
               Dalli.logger.debug { e.inspect }
               Dalli.logger.debug { "unable to get keys for server #{server.hostname}:#{server.port}" }
