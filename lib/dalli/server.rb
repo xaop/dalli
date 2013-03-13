@@ -458,7 +458,7 @@ module Dalli
       raise Dalli::NetworkError, 'No response' if !header
       (extras, _, status, count, opaque, cas) = header.unpack(CAS_HEADER)
       if opaque != request_id
-        puts "Opaque on CAS response doesn't match request_id (expected: #{request_id}, received: #{opqaue})"
+        raise DalliError, "Opaque mismatch: expected #{request_id}, but received #{opaque}"
       end
       data = read(count) if count > 0
       if status == 1
@@ -482,18 +482,12 @@ module Dalli
       value.bytesize <= @options[:value_max_bytes]
     end
 
-    def generic_response(unpack=false, r_id = nil)
+    def generic_response(unpack=false, request_id = 0)
       header = read(24)
       raise Dalli::NetworkError, 'No response' if !header
-      if r_id
-        (extras, _, status, count, op) = header.unpack(NORMAL_HEADER_WITH_OPAQUE)
-        if r_id == op
-          puts "All's well that ends well: expected and got #{r_id}"
-        else
-          puts "Panic! expected #{r_id} got #{op}"
-        end
-      else
-        (extras, _, status, count) = header.unpack(NORMAL_HEADER)
+      (extras, _, status, count, opaque) = header.unpack(NORMAL_HEADER_WITH_OPAQUE)
+      if request_id != opaque
+        raise DalliError, "Opaque mismatch: expected #{request_id}, but received #{opaque}"
       end
       data = read(count) if count > 0
       if status == 1
@@ -518,7 +512,7 @@ module Dalli
         raise Dalli::NetworkError, 'No response' if !header
         (key_length, _, body_length, opaque) = header.unpack(KV_HEADER)
         if opaque != request_id
-          puts "Received KeyValue response with opaque that doesn't match expected value (expected: #{request_id}, received: #{opaque})"
+          raise DalliError, "Opaque mismatch: expected #{request_id}, but received #{opaque}"
         end
         return hash if key_length == 0
         key = read(key_length)
