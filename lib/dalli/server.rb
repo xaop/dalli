@@ -342,13 +342,6 @@ module Dalli
       write(req)
     end
 
-    # Noop is a keepalive operation but also used to demarcate the end of a set of pipelined commands.
-    # We need to read all the responses at once.
-    def noop
-      write_noop
-      multi_response
-    end
-
     def append(key, value)
       request_id = generate_opaque
       req = [REQUEST, OPCODES[:append], key.bytesize, 0, 0, 0, value.bytesize + key.bytesize, request_id, 0, key, value].pack(FORMAT[:append])
@@ -505,20 +498,6 @@ module Dalli
         key = read(key_length)
         value = read(body_length - key_length) if body_length - key_length > 0
         hash[key] = value
-      end
-    end
-
-    def multi_response
-      hash = {}
-      loop do
-        header = read(24)
-        raise Dalli::NetworkError, 'No response' if !header
-        (key_length, _, body_length, opaque) = header.unpack(KV_HEADER)
-        return hash if key_length == 0
-        flags = read(4).unpack('N')[0]
-        key = read(key_length)
-        value = read(body_length - key_length - 4) if body_length - key_length - 4 > 0
-        hash[key] = deserialize(value, flags)
       end
     end
 
