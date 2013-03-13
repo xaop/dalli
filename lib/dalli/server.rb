@@ -141,7 +141,7 @@ module Dalli
 
       while buf.bytesize - pos >= 24
         header = buf.slice(pos, 24)
-        (key_length, _, body_length) = header.unpack(KV_HEADER)
+        (key_length, _, body_length, opaque) = header.unpack(KV_HEADER)
 
         if key_length == 0
           # all done!
@@ -466,9 +466,8 @@ module Dalli
     end
 
     CAS_HEADER = '@4CCnNNQ'
-    NORMAL_HEADER = '@4CCnN'
+    NORMAL_HEADER = '@4CCnNN'
     KV_HEADER = '@2n@6nNN'
-    NORMAL_HEADER_WITH_OPAQUE = '@4CCnNN'
 
     def under_max_value_size?(value)
       value.bytesize <= @options[:value_max_bytes]
@@ -477,7 +476,7 @@ module Dalli
     def generic_response(request_id, unpack=false)
       header = read(24)
       raise Dalli::NetworkError, 'No response' if !header
-      (extras, _, status, count, opaque) = header.unpack(NORMAL_HEADER_WITH_OPAQUE)
+      (extras, _, status, count, opaque) = header.unpack(NORMAL_HEADER)
       check_opaque(request_id, opaque)
       data = read(count) if count > 0
       if status == 1
@@ -514,7 +513,7 @@ module Dalli
       loop do
         header = read(24)
         raise Dalli::NetworkError, 'No response' if !header
-        (key_length, _, body_length) = header.unpack(KV_HEADER)
+        (key_length, _, body_length, opaque) = header.unpack(KV_HEADER)
         return hash if key_length == 0
         flags = read(4).unpack('N')[0]
         key = read(key_length)
@@ -660,7 +659,7 @@ module Dalli
       write(req)
       header = read(24)
       raise Dalli::NetworkError, 'No response' if !header
-      (extras, type, status, count) = header.unpack(NORMAL_HEADER)
+      (extras, type, status, count, _) = header.unpack(NORMAL_HEADER)
       raise Dalli::NetworkError, "Unexpected message format: #{extras} #{count}" unless extras == 0 && count > 0
       content = read(count)
       return (Dalli.logger.debug("Authentication not required/supported by server")) if status == 0x81
@@ -675,7 +674,7 @@ module Dalli
 
       header = read(24)
       raise Dalli::NetworkError, 'No response' if !header
-      (extras, type, status, count) = header.unpack(NORMAL_HEADER)
+      (extras, type, status, count, _) = header.unpack(NORMAL_HEADER)
       raise Dalli::NetworkError, "Unexpected message format: #{extras} #{count}" unless extras == 0 && count > 0
       content = read(count)
       return Dalli.logger.info("Dalli/SASL: #{content}") if status == 0
