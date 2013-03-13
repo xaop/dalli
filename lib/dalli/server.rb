@@ -245,22 +245,15 @@ module Dalli
       Thread.current[:dalli_multi]
     end
 
-    def opaque
-      @opaque ||= -1
-      @opaque = @opaque + 1
-    end
-    private :opaque
-
-
     def get(key)
-      request_id = opaque
+      request_id = generate_opaque
       req = [REQUEST, OPCODES[:get], key.bytesize, 0, 0, 0, key.bytesize, request_id, 0, key].pack(FORMAT[:get])
       write(req)
       generic_response(request_id, true)
     end
 
     def getkq(key)
-      request_id = opaque
+      request_id = generate_opaque
       req = [REQUEST, OPCODES[:getkq], key.bytesize, 0, 0, 0, key.bytesize, request_id, 0, key].pack(FORMAT[:getkq])
       write(req)
       # TODO: store the request_id in a list of expected replies
@@ -270,7 +263,7 @@ module Dalli
       (value, flags) = serialize(key, value, options)
 
       if under_max_value_size?(value)
-        request_id = opaque
+        request_id = generate_opaque
         req = [REQUEST, OPCODES[multi? ? :setq : :set], key.bytesize, 8, 0, 0, value.bytesize + key.bytesize + 8, request_id, cas, flags, ttl, key, value].pack(FORMAT[:set])
         write(req)
         generic_response(request_id) unless multi?
@@ -283,7 +276,7 @@ module Dalli
       (value, flags) = serialize(key, value, options)
 
       if under_max_value_size?(value)
-        request_id = opaque
+        request_id = generate_opaque
         req = [REQUEST, OPCODES[multi? ? :addq : :add], key.bytesize, 8, 0, 0, value.bytesize + key.bytesize + 8, request_id, 0, flags, ttl, key, value].pack(FORMAT[:add])
         write(req)
         generic_response(request_id) unless multi?
@@ -296,7 +289,7 @@ module Dalli
       (value, flags) = serialize(key, value, options)
 
       if under_max_value_size?(value)
-        request_id = opaque
+        request_id = generate_opaque
         req = [REQUEST, OPCODES[multi? ? :replaceq : :replace], key.bytesize, 8, 0, 0, value.bytesize + key.bytesize + 8, request_id, 0, flags, ttl, key, value].pack(FORMAT[:replace])
         write(req)
         generic_response(request_id) unless multi?
@@ -306,21 +299,21 @@ module Dalli
     end
 
     def delete(key)
-      request_id = opaque
+      request_id = generate_opaque
       req = [REQUEST, OPCODES[multi? ? :deleteq : :delete], key.bytesize, 0, 0, 0, key.bytesize, request_id, 0, key].pack(FORMAT[:delete])
       write(req)
       generic_response(request_id) unless multi?
     end
 
     def flush(ttl)
-      request_id = opaque
+      request_id = generate_opaque
       req = [REQUEST, OPCODES[:flush], 0, 4, 0, 0, 4, request_id, 0, 0].pack(FORMAT[:flush])
       write(req)
       generic_response(request_id)
     end
 
     def decr(key, count, ttl, default)
-      request_id = opaque
+      request_id = generate_opaque
       expiry = default ? ttl : 0xFFFFFFFF
       default ||= 0
       (h, l) = split(count)
@@ -332,7 +325,7 @@ module Dalli
     end
 
     def incr(key, count, ttl, default)
-      request_id = opaque
+      request_id = generate_opaque
       expiry = default ? ttl : 0xFFFFFFFF
       default ||= 0
       (h, l) = split(count)
@@ -357,49 +350,49 @@ module Dalli
     end
 
     def append(key, value)
-      request_id = opaque
+      request_id = generate_opaque
       req = [REQUEST, OPCODES[:append], key.bytesize, 0, 0, 0, value.bytesize + key.bytesize, request_id, 0, key, value].pack(FORMAT[:append])
       write(req)
       generic_response(request_id)
     end
 
     def prepend(key, value)
-      request_id = opaque
+      request_id = generate_opaque
       req = [REQUEST, OPCODES[:prepend], key.bytesize, 0, 0, 0, value.bytesize + key.bytesize, request_id, 0, key, value].pack(FORMAT[:prepend])
       write(req)
       generic_response(request_id)
     end
 
     def stats(info='')
-      request_id = opaque
+      request_id = generate_opaque
       req = [REQUEST, OPCODES[:stat], info.bytesize, 0, 0, 0, info.bytesize, request_id, 0, info].pack(FORMAT[:stat])
       write(req)
       keyvalue_response(request_id)
     end
 
     def reset_stats
-      request_id = opaque
+      request_id = generate_opaque
       req = [REQUEST, OPCODES[:stat], 'reset'.bytesize, 0, 0, 0, 'reset'.bytesize, request_id, 0, 'reset'].pack(FORMAT[:stat])
       write(req)
       generic_response(request_id)
     end
 
     def cas(key)
-      request_id = opaque
+      request_id = generate_opaque
       req = [REQUEST, OPCODES[:get], key.bytesize, 0, 0, 0, key.bytesize, request_id, 0, key].pack(FORMAT[:get])
       write(req)
       cas_response(request_id)
     end
 
     def version
-      request_id = opaque
+      request_id = generate_opaque
       req = [REQUEST, OPCODES[:version], 0, 0, 0, 0, 0, request_id, 0].pack(FORMAT[:noop])
       write(req)
       generic_response(request_id)
     end
 
     def touch(key, ttl)
-      request_id = opaque
+      request_id = generate_opaque
       req = [REQUEST, OPCODES[:touch], key.bytesize, 4, 0, 0, key.bytesize + 4, request_id, 0, ttl, key].pack(FORMAT[:touch])
       write(req)
       generic_response(request_id)
@@ -458,9 +451,7 @@ module Dalli
       header = read(24)
       raise Dalli::NetworkError, 'No response' if !header
       (extras, _, status, count, opaque, cas) = header.unpack(CAS_HEADER)
-      if opaque != request_id
-        raise DalliError, "Opaque mismatch: expected #{request_id}, but received #{opaque}"
-      end
+      check_opaque(request_id, opaque)
       data = read(count) if count > 0
       if status == 1
         nil
@@ -487,9 +478,7 @@ module Dalli
       header = read(24)
       raise Dalli::NetworkError, 'No response' if !header
       (extras, _, status, count, opaque) = header.unpack(NORMAL_HEADER_WITH_OPAQUE)
-      if request_id != opaque
-        raise DalliError, "Opaque mismatch: expected #{request_id}, but received #{opaque}"
-      end
+      check_opaque(request_id, opaque)
       data = read(count) if count > 0
       if status == 1
         nil
@@ -512,9 +501,7 @@ module Dalli
         header = read(24)
         raise Dalli::NetworkError, 'No response' if !header
         (key_length, _, body_length, opaque) = header.unpack(KV_HEADER)
-        if opaque != request_id
-          raise DalliError, "Opaque mismatch: expected #{request_id}, but received #{opaque}"
-        end
+        check_opaque(request_id, opaque)
         return hash if key_length == 0
         key = read(key_length)
         value = read(body_length - key_length) if body_length - key_length > 0
@@ -697,6 +684,18 @@ module Dalli
       raise NotImplementedError, "No two-step authentication mechanisms supported"
       # (step, msg) = sasl.receive('challenge', content)
       # raise Dalli::NetworkError, "Authentication failed" if sasl.failed? || step != 'response'
+    end
+
+    def generate_opaque
+      @opaque ||= -1
+      @opaque = @opaque + 1
+    end
+
+    def check_opaque(expected, received)
+      if expected != received
+        raise DalliError, "Opaque mismatch: expected #{expected}, but received #{received}"
+      end
+      # TODO: handle "expected" mismatches
     end
   end
 end
