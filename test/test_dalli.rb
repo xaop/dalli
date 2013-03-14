@@ -217,6 +217,29 @@ describe 'Dalli' do
       end
     end
 
+    should "support pipelining set and replace commands with multi and handle errors" do
+      memcached(19127, nil, :value_max_bytes => 2*1024*1024) do |dc|
+        a, b, c = nil
+        assert_raises Dalli::ManyErrors do
+          dc.multi do
+            dc.set("a", "foo")
+            # Perform an operation that will trigger errors
+            dc.set("b", "b"*(1024*1000*2))
+            dc.set("c", %w(a b c))
+
+            a = dc.get("a")
+            b = dc.get("b")
+            c = dc.get("c")
+          end
+        end
+
+        # After the block to make certain that no error is raised before it
+        assert_equal("foo", a)
+        assert_equal(nil, b)
+        assert_equal(%w(a b c), c)
+      end
+    end
+
     should 'support raw incr/decr' do
       memcached do |client|
         client.flush
