@@ -144,7 +144,7 @@ module Dalli
 
       while buf.bytesize - pos >= 24
         header = buf.slice(pos, 24)
-        (key_length, _, body_length, opaque) = header.unpack(KV_HEADER)
+        (key_length, _, body_length, _) = header.unpack(KV_HEADER)
 
         if key_length == 0
           # all done!
@@ -524,7 +524,7 @@ module Dalli
       end
 
       case INVERSE_OPCODES[opcode]
-      when :get, :set, :add, :replace, :delete, :version, :flush, :version, :append, :prepend
+      when :get, :set, :add, :replace, :delete, :version, :flush, :append, :prepend
         if status == 1
           nil
         elsif status == 2 || status == 5
@@ -592,7 +592,7 @@ module Dalli
     def generic_response(request_id, unpack=false)
       header = read(24)
       raise Dalli::NetworkError, 'No response' if !header
-      value, cas = response(request_id, header, unpack)
+      value, _ = response(request_id, header, unpack)
       value
     end
 
@@ -601,7 +601,7 @@ module Dalli
       loop do
         header = read(24)
         raise Dalli::NetworkError, 'No response' if !header
-        success, key, value = response(request_id, header)
+        _, key, value = response(request_id, header)
         return hash if key.nil?
         hash[key] = value
       end
