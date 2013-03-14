@@ -45,6 +45,8 @@ module Dalli
       @msg = nil
       @pid = nil
       @inprogress = nil
+      @expected_responses = {}
+      @gathered_responses = {}
     end
 
     # Chokepoint method for instrumentation
@@ -256,7 +258,6 @@ module Dalli
       request_id = generate_opaque
       req = [REQUEST, OPCODES[:getkq], key.bytesize, 0, 0, 0, key.bytesize, request_id, 0, key].pack(FORMAT[:getkq])
       write(req)
-      # TODO: store the request_id in a list of expected replies
     end
 
     def set(key, value, ttl, cas, options)
@@ -266,7 +267,11 @@ module Dalli
         request_id = generate_opaque
         req = [REQUEST, OPCODES[multi? ? :setq : :set], key.bytesize, 8, 0, 0, value.bytesize + key.bytesize + 8, request_id, cas, flags, ttl, key, value].pack(FORMAT[:set])
         write(req)
-        generic_response(request_id) unless multi?
+        if multi?
+          expect_response(request_id)
+        else
+          generic_response(request_id)
+        end
       else
         false
       end
@@ -279,7 +284,11 @@ module Dalli
         request_id = generate_opaque
         req = [REQUEST, OPCODES[multi? ? :addq : :add], key.bytesize, 8, 0, 0, value.bytesize + key.bytesize + 8, request_id, 0, flags, ttl, key, value].pack(FORMAT[:add])
         write(req)
-        generic_response(request_id) unless multi?
+        if multi?
+          expect_response(request_id)
+        else
+          generic_response(request_id)
+        end
       else
         false
       end
@@ -292,7 +301,11 @@ module Dalli
         request_id = generate_opaque
         req = [REQUEST, OPCODES[multi? ? :replaceq : :replace], key.bytesize, 8, 0, 0, value.bytesize + key.bytesize + 8, request_id, 0, flags, ttl, key, value].pack(FORMAT[:replace])
         write(req)
-        generic_response(request_id) unless multi?
+        if multi?
+          expect_response(request_id)
+        else
+          generic_response(request_id)
+        end
       else
         false
       end
@@ -302,7 +315,11 @@ module Dalli
       request_id = generate_opaque
       req = [REQUEST, OPCODES[multi? ? :deleteq : :delete], key.bytesize, 0, 0, 0, key.bytesize, request_id, 0, key].pack(FORMAT[:delete])
       write(req)
-      generic_response(request_id) unless multi?
+      if multi?
+        expect_response(request_id)
+      else
+        generic_response(request_id)
+      end
     end
 
     def flush(ttl)
@@ -320,8 +337,7 @@ module Dalli
       (dh, dl) = split(default)
       req = [REQUEST, OPCODES[:decr], key.bytesize, 20, 0, 0, key.bytesize + 20, request_id, 0, h, l, dh, dl, expiry, key].pack(FORMAT[:decr])
       write(req)
-      body = generic_response(request_id)
-      body ? longlong(*body.unpack('NN')) : body
+      generic_response(request_id)
     end
 
     def incr(key, count, ttl, default)
@@ -332,8 +348,7 @@ module Dalli
       (dh, dl) = split(default)
       req = [REQUEST, OPCODES[:incr], key.bytesize, 20, 0, 0, key.bytesize + 20, request_id, 0, h, l, dh, dl, expiry, key].pack(FORMAT[:incr])
       write(req)
-      body = generic_response(request_id)
-      body ? longlong(*body.unpack('NN')) : body
+      generic_response(request_id)
     end
 
     def write_noop
@@ -360,7 +375,7 @@ module Dalli
       request_id = generate_opaque
       req = [REQUEST, OPCODES[:stat], info.bytesize, 0, 0, 0, info.bytesize, request_id, 0, info].pack(FORMAT[:stat])
       write(req)
-      keyvalue_response(request_id)
+      stats_response(request_id)
     end
 
     def reset_stats
@@ -443,60 +458,118 @@ module Dalli
     def cas_response(request_id)
       header = read(24)
       raise Dalli::NetworkError, 'No response' if !header
-      (extras, _, status, count, opaque, cas) = header.unpack(CAS_HEADER)
-      check_opaque(request_id, opaque)
-      data = read(count) if count > 0
-      if status == 1
-        nil
-      elsif status != 0
-        raise Dalli::DalliError, "Response error #{status}: #{RESPONSE_CODES[status]}"
-      elsif data
-        flags = data[0...extras].unpack('N')[0]
-        value = data[extras..-1]
-        data = deserialize(value, flags)
-      end
-      [data, cas]
+      response(request_id, header, true)
     end
 
-    CAS_HEADER = '@4CCnNNQ'
     NORMAL_HEADER = '@4CCnNN'
     KV_HEADER = '@2n@6nNN'
+
+    FULL_HEADER = 'CCnCCnNNQ'
 
     def under_max_value_size?(value)
       value.bytesize <= @options[:value_max_bytes]
     end
 
-    def generic_response(request_id, unpack=false)
-      header = read(24)
-      raise Dalli::NetworkError, 'No response' if !header
-      (extras, _, status, count, opaque) = header.unpack(NORMAL_HEADER)
-      check_opaque(request_id, opaque)
-      data = read(count) if count > 0
-      if status == 1
-        nil
-      elsif status == 2 || status == 5
-        false # Not stored, normal status for add operation
-      elsif status != 0
-        raise Dalli::DalliError, "Response error #{status}: #{RESPONSE_CODES[status]}"
-      elsif data
-        flags = data[0...extras].unpack('N')[0]
-        value = data[extras..-1]
-        unpack ? deserialize(value, flags) : value
+    def response(request_id, header, unpack = false)
+      _magic, opcode, key_length, extras, _data_type, status, body_length, opaque, cas = header.unpack(FULL_HEADER)
+      while request_id != opaque
+        if expected_unpack = @expected_responses.has_key?(opaque)
+          expected_response = response(opaque, header, expected_unpack)
+          @gathered_responses[opaque] = expected_response
+          @expected_responses.delete(opaque)
+        else
+          raise ::Dalli::DalliError, "Unexpected response with opaque #{opaque} instead of expected #{request_id}"
+        end
+        _magic, opcode, extras, key_length, extras, _data_type, status, body_length, opaque, cas = header.unpack(FULL_HEADER)
+      end
+      if body_length > 0
+        data = read(body_length)
+
+        flags = data.slice(0, extras).unpack('N')[0]
+        key = data.slice(extras, key_length)
+        value = data.slice(extras + key_length, body_length - key_length - extras) if body_length - key_length - extras > 0
+      end
+
+      case INVERSE_OPCODES[opcode]
+      when :get, :set, :add, :replace, :delete, :version, :flush, :version, :append, :prepend
+        if status == 1
+          nil
+        elsif status == 2 || status == 5
+          false # Not stored, normal status for add operation
+        elsif status != 0
+          raise ::Dalli::DalliError, "Response error #{status}: #{RESPONSE_CODES[status]}"
+        elsif data
+          value = unpack ? deserialize(value, flags) : value
+          [value, cas]
+        else
+          true
+        end
+      when :touch
+        if status == 1
+          nil
+        elsif status != 0
+          raise ::Dalli::DalliError, "Response error #{status}: #{RESPONSE_CODES[status]}"
+        else
+          true
+        end
+      when :getkq
+        # Quiet get will not respond with a not found message
+        if status == 1
+          raise ::Dalli::DalliError, "Unexpected not found response for quiet get"
+        elsif status != 0
+          raise ::Dalli::DalliError, "Response error #{status}: #{RESPONSE_CODES[status]}"
+        else
+          unpack ? deserialize(value, flags) : value
+        end
+      when :setq, :addq, :replaceq, :deleteq
+        # Quiet mutations only respond in the case of a failure
+        if status == 1 # Key not found
+          nil
+        elsif status != 0
+          raise ::Dalli::DalliError, "Response error #{status}: #{RESPONSE_CODES[status]}"
+        else
+          raise ::Dalli::DalliError, "Unexpected success response for quiet mutation"
+        end
+      when :incr, :decr
+        if status == 1 # Key not found
+          nil
+        elsif status != 0
+          raise Dalli::DalliError, "Response error #{status}: #{RESPONSE_CODES[status]}"
+        elsif status == 0
+          value ? longlong(*value.unpack('NN')) : value
+        end
+      when :noop
+        # Do nothing?
+      when :stat
+        if status == 0 && data
+          [true, key, value]
+        elsif status == 0
+          true
+        else
+          raise Dalli::DalliError, "Response error #{status}: #{RESPONSE_CODES[status]}"
+        end
+      when :incrq, :decrq
+        # Reserverved opcodes, no way to handle this (and it shouldn't occur anyway)
+        raise DalliError, "Reserved opcode encountered while parsing response: 0x#{opcode.to_s(16)}"
       else
-        true
+        raise DalliError, "Unknown opcode encountered while parsing response: 0x#{opcode.to_s(16)}"
       end
     end
 
-    def keyvalue_response(request_id)
+    def generic_response(request_id, unpack=false)
+      header = read(24)
+      raise Dalli::NetworkError, 'No response' if !header
+      value, cas = response(request_id, header, unpack)
+      value
+    end
+
+    def stats_response(request_id)
       hash = {}
       loop do
         header = read(24)
         raise Dalli::NetworkError, 'No response' if !header
-        (key_length, _, body_length, opaque) = header.unpack(KV_HEADER)
-        check_opaque(request_id, opaque)
-        return hash if key_length == 0
-        key = read(key_length)
-        value = read(body_length - key_length) if body_length - key_length > 0
+        success, key, value = response(request_id, header)
+        return hash if key.nil?
         hash[key] = value
       end
     end
@@ -591,6 +664,8 @@ module Dalli
       :touch => 0x1C,
     }
 
+    INVERSE_OPCODES = OPCODES.inject({}) {|h,(k,v)| h[v] = k; h }
+
     HEADER = "CCnCCnNNQ"
     OP_FORMAT = {
       :get => 'a*',
@@ -674,6 +749,10 @@ module Dalli
         raise DalliError, "Opaque mismatch: expected #{expected}, but received #{received}"
       end
       # TODO: handle "expected" mismatches
+    end
+
+    def expect_response(request_id, unpack = false)
+      @expected_responses[request_id] = unpack
     end
   end
 end
