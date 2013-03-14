@@ -63,7 +63,7 @@ module Dalli
         server.receive_expected_responses
       end.flatten
       if errors.any?
-        raise ::Dalli::ManyErrors.new(errors), "#{errors.length} occurred in multi block"
+        raise ::Dalli::MultiError.new(errors), "#{errors.length} occurred in multi block"
       end
     ensure
       Thread.current[:dalli_multi] = old

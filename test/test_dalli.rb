@@ -220,7 +220,7 @@ describe 'Dalli' do
     should "support pipelining set and replace commands with multi and handle errors" do
       memcached(19127, nil, :value_max_bytes => 2*1024*1024) do |dc|
         a, b, c = nil
-        assert_raises Dalli::ManyErrors do
+        assert_raises Dalli::MultiError do
           dc.multi do
             dc.set("a", "foo")
             # Perform an operation that will trigger errors

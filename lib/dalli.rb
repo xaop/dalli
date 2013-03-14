@@ -26,7 +26,7 @@ module Dalli
 
 
   # Exception caused by a combination of errors from a multi block
-  class ManyErrors < DalliError;
+  class MultiError < DalliError;
     attr_reader :errors
 
     def initialize(errors)
