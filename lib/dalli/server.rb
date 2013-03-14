@@ -470,17 +470,17 @@ module Dalli
       value.bytesize <= @options[:value_max_bytes]
     end
 
-    def response(request_id, header, unpack = false)
+    def response(request_id, header, unpack = false, raise_errors = true)
       _magic, opcode, key_length, extras, _data_type, status, body_length, opaque, cas = header.unpack(FULL_HEADER)
       while request_id != opaque
-        if expected_unpack = @expected_responses.has_key?(opaque)
-          expected_response = response(opaque, header, expected_unpack)
+        if @expected_responses.has_key?(opaque)
+          expected_response = response(opaque, header, @expected_responses.delete(opaque), false)
           @gathered_responses[opaque] = expected_response
-          @expected_responses.delete(opaque)
         else
           raise ::Dalli::DalliError, "Unexpected response with opaque #{opaque} instead of expected #{request_id}"
         end
-        _magic, opcode, extras, key_length, extras, _data_type, status, body_length, opaque, cas = header.unpack(FULL_HEADER)
+        header = read(24)
+        _magic, opcode, key_length, extras, _data_type, status, body_length, opaque, cas = header.unpack(FULL_HEADER)
       end
       if body_length > 0
         data = read(body_length)
@@ -497,7 +497,7 @@ module Dalli
         elsif status == 2 || status == 5
           false # Not stored, normal status for add operation
         elsif status != 0
-          raise ::Dalli::DalliError, "Response error #{status}: #{RESPONSE_CODES[status]}"
+          custom_raise ::Dalli::DalliError, "Response error #{status}: #{RESPONSE_CODES[status]}", raise_errors
         elsif data
           value = unpack ? deserialize(value, flags) : value
           [value, cas]
@@ -508,16 +508,16 @@ module Dalli
         if status == 1
           nil
         elsif status != 0
-          raise ::Dalli::DalliError, "Response error #{status}: #{RESPONSE_CODES[status]}"
+          custom_raise ::Dalli::DalliError, "Response error #{status}: #{RESPONSE_CODES[status]}", raise_errors
         else
           true
         end
       when :getkq
         # Quiet get will not respond with a not found message
         if status == 1
-          raise ::Dalli::DalliError, "Unexpected not found response for quiet get"
+          custom_raise ::Dalli::DalliError, "Unexpected not found response for quiet get", raise_errors
         elsif status != 0
-          raise ::Dalli::DalliError, "Response error #{status}: #{RESPONSE_CODES[status]}"
+          custom_raise ::Dalli::DalliError, "Response error #{status}: #{RESPONSE_CODES[status]}", raise_errors
         else
           unpack ? deserialize(value, flags) : value
         end
@@ -526,15 +526,15 @@ module Dalli
         if status == 1 # Key not found
           nil
         elsif status != 0
-          raise ::Dalli::DalliError, "Response error #{status}: #{RESPONSE_CODES[status]}"
+          custom_raise ::Dalli::DalliError, "Response error #{status}: #{RESPONSE_CODES[status]}", raise_errors
         else
-          raise ::Dalli::DalliError, "Unexpected success response for quiet mutation"
+          custom_raise ::Dalli::DalliError, "Unexpected success response for quiet mutation", raise_errors
         end
       when :incr, :decr
         if status == 1 # Key not found
           nil
         elsif status != 0
-          raise Dalli::DalliError, "Response error #{status}: #{RESPONSE_CODES[status]}"
+          custom_raise Dalli::DalliError, "Response error #{status}: #{RESPONSE_CODES[status]}", raise_errors
         elsif status == 0
           value ? longlong(*value.unpack('NN')) : value
         end
@@ -546,7 +546,7 @@ module Dalli
         elsif status == 0
           true
         else
-          raise Dalli::DalliError, "Response error #{status}: #{RESPONSE_CODES[status]}"
+          custom_raise Dalli::DalliError, "Response error #{status}: #{RESPONSE_CODES[status]}", raise_errors
         end
       when :incrq, :decrq
         # Reserverved opcodes, no way to handle this (and it shouldn't occur anyway)
@@ -744,15 +744,16 @@ module Dalli
       @opaque = @opaque + 1
     end
 
-    def check_opaque(expected, received)
-      if expected != received
-        raise DalliError, "Opaque mismatch: expected #{expected}, but received #{received}"
-      end
-      # TODO: handle "expected" mismatches
-    end
-
     def expect_response(request_id, unpack = false)
       @expected_responses[request_id] = unpack
+    end
+
+    def custom_raise(error, message, raise_errors)
+      if raise_errors
+        raise error, message
+      else
+        {error_class: error, message: message}
+      end
     end
   end
 end
