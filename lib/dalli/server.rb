@@ -231,7 +231,7 @@ module Dalli
       Dalli.logger.info { "#{hostname}:#{port} failed (count: #{@fail_count})" }
 
       @expected_responses.keys.each do |k|
-        @gathered_responses[k] = {error_type: ::Dalli::NetworkError, message: "failure occurred"}
+        @gathered_responses[k] = {:error_type => ::Dalli::NetworkError, :message => "failure occurred"}
       end
       @expected_responses = {}
 
@@ -787,7 +787,7 @@ module Dalli
       if raise_errors
         raise error, message
       else
-        {error_class: error, message: message}
+        {:error_type => error, :message => message}
       end
     end
   end
