@@ -24,6 +24,16 @@ module Dalli
   # application error in marshalling deserialization or decompression
   class UnmarshalError < DalliError; end
 
+
+  # Exception caused by a combination of errors from a multi block
+  class ManyErrors < DalliError;
+    attr_reader :errors
+
+    def initialize(errors)
+      @errors = errors
+    end
+  end
+
   def self.logger
     @logger ||= (rails_logger || default_logger)
   end

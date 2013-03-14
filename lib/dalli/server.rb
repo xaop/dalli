@@ -46,6 +46,7 @@ module Dalli
       @pid = nil
       @inprogress = nil
       @expected_responses = {}
+      @expected_responses_by_thread = {}
       @gathered_responses = {}
     end
 
@@ -176,6 +177,33 @@ module Dalli
       failure!
     end
 
+    def receive_expected_responses
+      responses = []
+      if this_thread =  @expected_responses_by_thread[Thread.current]
+        if (this_thread - @gathered_responses.keys).any?
+          request_id = generate_opaque
+          write_noop(request_id)
+          # This forces reading in all expected responses in the gathered_responses
+          generic_response(request_id)
+        end
+
+        this_thread.each do |opaque|
+          response = @gathered_responses.delete(opaque)
+          if response
+            responses << response
+          else
+            @expected_responses.delete(opaque)
+          end
+        end
+      end
+      responses
+    rescue SystemCallError, Timeout::Error, EOFError
+      failure!
+    ensure
+      @expected_responses_by_thread[Thread.current] = nil
+    end
+
+
     # Abort an earlier #multi_response_start. Used to signal an external
     # timeout. The underlying socket is disconnected, and the exception is
     # swallowed.
@@ -201,6 +229,11 @@ module Dalli
 
     def failure!
       Dalli.logger.info { "#{hostname}:#{port} failed (count: #{@fail_count})" }
+
+      @expected_responses.keys.each do |k|
+        @gathered_responses[k] = {error_type: ::Dalli::NetworkError, message: "failure occurred"}
+      end
+      @expected_responses = {}
 
       @fail_count += 1
       if @fail_count >= options[:socket_max_failures]
@@ -351,9 +384,9 @@ module Dalli
       generic_response(request_id)
     end
 
-    def write_noop
+    def write_noop(request_id = 0)
       # No request_id needed: since there is no response anyway
-      req = [REQUEST, OPCODES[:noop], 0, 0, 0, 0, 0, 0, 0].pack(FORMAT[:noop])
+      req = [REQUEST, OPCODES[:noop], 0, 0, 0, 0, 0, request_id, 0].pack(FORMAT[:noop])
       write(req)
     end
 
@@ -746,6 +779,8 @@ module Dalli
 
     def expect_response(request_id, unpack = false)
       @expected_responses[request_id] = unpack
+      @expected_responses_by_thread[Thread.current] ||= []
+      @expected_responses_by_thread[Thread.current] << request_id
     end
 
     def custom_raise(error, message, raise_errors)

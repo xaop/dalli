@@ -53,10 +53,21 @@ module Dalli
     # pipelined as Dalli will use 'quiet' operations where possible.
     # Currently supports the set, add, replace and delete operations.
     def multi
+      servers = self.servers_in_use = Set.new
       old, Thread.current[:dalli_multi] = Thread.current[:dalli_multi], true
       yield
+
+      # At the moment all "expected" responses are in fact errors from setting/
+      # getting
+      errors = servers.map do |server|
+        server.receive_expected_responses
+      end.flatten
+      if errors.any?
+        raise ::Dalli::ManyErrors.new(errors), "#{errors.length} occurred in multi block"
+      end
     ensure
       Thread.current[:dalli_multi] = old
+      servers = self.servers_in_use = nil
     end
 
     def get(key, options=nil)
